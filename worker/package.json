@@ -1,15 +1,16 @@
-﻿{
+{
   "name": "cf-crawler-worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsup src/index.ts --format esm --clean --out-dir dist"
+    "build": "tsup src/index.ts --format esm --clean --out-dir dist --external @cloudflare/playwright"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250109.0",
     "tsup": "^8.3.5",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "wrangler": "^4.71.0",
+    "@cloudflare/playwright": "^1.1.0"
   }
 }
-

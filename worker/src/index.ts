@@ -1,8 +1,9 @@
-﻿interface Env {
+﻿import { launch } from "@cloudflare/playwright";
+
+interface Env {
+    BROWSER: Fetcher;
     CF_CRAWLER_TOKEN?: string;
     CF_CRAWLER_VERSION?: string;
-    BROWSER_RENDERING_API_URL?: string;
-    BROWSER_RENDERING_TOKEN?: string;
     CRAWLER_CACHE?: KVNamespace;
     CACHE_TTL_SECONDS?: string;
 }
@@ -18,7 +19,7 @@ interface FetchPayload {
 const defaultHeaders: Record<string, string> = {
     "user-agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "accept-language": "en-US,en;q=0.9",
+    "accept-language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
 };
 
 const challengeMarkers = ["turnstile", "cf-challenge", "attention required", "captcha", "verify you are human"];
@@ -47,11 +48,9 @@ function buildSignals(status: number, body: string, contentType: string): string
     if ([403, 429, 503].includes(status)) {
         signals.add(`http_${status}`);
     }
-
     if (contentType.includes("text/html") && body.length < 300) {
         signals.add("html_too_short");
     }
-
     if (challengeMarkers.some((marker) => lowerBody.includes(marker))) {
         signals.add("challenge_marker");
     }
@@ -138,43 +137,61 @@ async function doFetch(payload: FetchPayload, env: Env): Promise<Response> {
 }
 
 async function doRender(payload: FetchPayload, env: Env): Promise<Response> {
-    if (!env.BROWSER_RENDERING_API_URL || !env.BROWSER_RENDERING_TOKEN) {
+    if (!env.BROWSER) {
         return json(200, {
             ok: false,
             url: payload.url,
             final_url: payload.url,
             status: 501,
-            error: "browser rendering is not configured",
+            error: "browser rendering binding is not configured",
             anti_bot_signals: ["render_not_configured"],
         });
     }
 
     const started = Date.now();
-    try {
-        const resp = await fetch(env.BROWSER_RENDERING_API_URL, {
-            method: "POST",
-            headers: {
-                authorization: `Bearer ${env.BROWSER_RENDERING_TOKEN}`,
-                "content-type": "application/json",
-            },
-            body: JSON.stringify({
-                url: payload.url,
-            }),
-        });
+    let browser: Awaited<ReturnType<typeof launch>> | undefined;
 
-        const text = await resp.text();
+    try {
+        browser = await launch(env.BROWSER);
+        const context = await browser.newContext({
+            userAgent: defaultHeaders["user-agent"],
+            extraHTTPHeaders: {
+                "accept-language": defaultHeaders["accept-language"],
+            },
+        });
+        const page = await context.newPage();
+        await page.goto(payload.url, {
+            waitUntil: "domcontentloaded",
+            timeout: payload.timeout_ms ?? 30000,
+        });
+        await page.waitForTimeout(1500);
+
+        const title = await page.title();
+        const html = await page.content();
+        const finalUrl = page.url();
+        const antiBotSignals = buildSignals(200, html, "text/html");
+
+        await context.close();
+        await browser.close();
+        browser = undefined;
+
         return json(200, {
-            ok: resp.ok,
+            ok: true,
             url: payload.url,
-            final_url: payload.url,
-            status: resp.status,
-            markdown: text,
-            anti_bot_signals: [],
+            final_url: finalUrl,
+            status: 200,
+            title,
+            html,
+            content_type: "text/html; charset=utf-8",
+            anti_bot_signals: antiBotSignals,
             timings: {
                 total_ms: Date.now() - started,
             },
         });
     } catch (error) {
+        if (browser) {
+            await browser.close();
+        }
         return json(200, {
             ok: false,
             url: payload.url,
@@ -199,8 +216,8 @@ export default {
         if (req.method === "GET" && url.pathname === "/v1/health") {
             return json(200, {
                 ok: true,
-                version: env.CF_CRAWLER_VERSION ?? "0.1.0",
-                browser_rendering: Boolean(env.BROWSER_RENDERING_API_URL && env.BROWSER_RENDERING_TOKEN),
+                version: env.CF_CRAWLER_VERSION ?? "0.2.0",
+                browser_rendering: Boolean(env.BROWSER),
                 cache_enabled: Boolean(env.CRAWLER_CACHE),
                 now: new Date().toISOString(),
             });

@@ -1,12 +1,14 @@
 ﻿name = "cf-crawler-worker"
 main = "src/index.ts"
+workers_dev = true
 compatibility_date = "2026-03-06"
+compatibility_flags = ["nodejs_compat"]
 
 [vars]
-CF_CRAWLER_VERSION = "0.1.0"
+CF_CRAWLER_VERSION = "0.2.0"
 
-# Optional: set browser rendering REST API endpoint if you do not use direct browser bindings.
-# BROWSER_RENDERING_API_URL = "https://api.cloudflare.com/client/v4/accounts/<account_id>/browser-rendering/markdown"
+[browser]
+binding = "BROWSER"
 
 # Optional: KV cache for low-cost dedupe/result caching.
 # [[kv_namespaces]]
