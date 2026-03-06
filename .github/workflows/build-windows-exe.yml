@@ -13,12 +13,17 @@ on:
       - main
       - master
 
+permissions:
+  contents: write
+
 jobs:
   build-windows-exe:
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -48,3 +53,44 @@ jobs:
           path: release/cf-crawler-win-x64.exe
           if-no-files-found: error
 
+      - name: Publish latest release
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = 'latest'
+          $name = 'Latest build'
+          $notes = @"
+          Auto-updated build from branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          "@
+
+          gh release view $tag --repo ${{ github.repository }} *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag release/cf-crawler-win-x64.exe --clobber --repo ${{ github.repository }}
+            gh release edit $tag --title $name --notes $notes --repo ${{ github.repository }}
+          } else {
+            gh release create $tag release/cf-crawler-win-x64.exe --title $name --notes $notes --latest --repo ${{ github.repository }}
+          }
+
+      - name: Publish version release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $name = $tag
+          $notes = @"
+          Version release $tag
+          Commit: ${{ github.sha }}
+          "@
+
+          gh release view $tag --repo ${{ github.repository }} *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag release/cf-crawler-win-x64.exe --clobber --repo ${{ github.repository }}
+            gh release edit $tag --title $name --notes $notes --repo ${{ github.repository }}
+          } else {
+            gh release create $tag release/cf-crawler-win-x64.exe --title $name --notes $notes --repo ${{ github.repository }}
+          }
