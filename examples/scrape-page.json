@@ -1,0 +1,7 @@
+﻿{
+  "url": "https://example.com",
+  "goal": "Extract page summary",
+  "mode": "article",
+  "strategy": "auto",
+  "persist_path": "./data/runs/scrape-example.json"
+}

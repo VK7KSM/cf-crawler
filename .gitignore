@@ -1,0 +1,10 @@
+﻿node_modules/
+dist/
+worker/.wrangler/
+worker/node_modules/
+worker/dist/
+data/db/
+data/cache/
+dist-exe/
+release/
+data/runs/

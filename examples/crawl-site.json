@@ -1,0 +1,9 @@
+﻿{
+  "seed_url": "https://example.com",
+  "goal": "Collect article links and summaries",
+  "scope": "same_host",
+  "max_pages": 10,
+  "depth": 2,
+  "strategy": "auto",
+  "persist_path": "./data/runs/crawl-example.json"
+}

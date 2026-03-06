@@ -1,0 +1,33 @@
+{
+  "name": "cf-crawler",
+  "version": "0.1.0",
+  "description": "Cloudflare-backed crawler sidecar for zeroclaw/elfclaw",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsup src/cli/index.ts --format esm --dts --clean --out-dir dist",
+    "check": "tsc --noEmit",
+    "dev": "tsx src/cli/index.ts",
+    "build:worker": "npm.cmd --prefix worker run build",
+    "build:exe:bundle": "esbuild src/cli/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist-exe/index.cjs --minify",
+    "build:exe": "npm.cmd run build:exe:bundle && pkg dist-exe/index.cjs --targets node22-win-x64 --output release/cf-crawler-win-x64.exe --compress Brotli",
+    "build:ci": "npm.cmd run check && npm.cmd run build && npm.cmd run build:worker && npm.cmd run build:exe"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "pino": "^9.5.0",
+    "undici": "^6.20.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "esbuild": "^0.25.1",
+    "@yao-pkg/pkg": "^6.6.0"
+  }
+}
