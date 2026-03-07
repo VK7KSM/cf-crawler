@@ -177,8 +177,14 @@ Available commands: `health`, `scrape-page`, `crawl-site`, `login`, `agent-reach
 | Flag | Description |
 |------|-------------|
 | `--input <file path>` | Read input from a JSON file |
-| `--json '<json string>'` | Pass JSON directly as a string (good for scripting) |
+| `--json '<json string>'` | Pass JSON directly as a string (works in bash; **broken in PowerShell 5.1**, use stdin pipe instead) |
 | `--pretty` | Pretty-print the output JSON (human-readable). Without this flag, output is compact (machine-readable). |
+| *(stdin pipe)* | Pipe JSON via stdin: `echo '{"url":"..."}' \| cf-crawler scrape-page`. **Recommended for PowerShell.** |
+
+> **PowerShell users:** PowerShell 5.1 has a [known bug](https://github.com/PowerShell/PowerShell/issues/1995) that corrupts double-quoted strings when passing them as arguments to native executables. Use stdin pipe instead of `--json`:
+> ```powershell
+> echo '{"url":"https://example.com","goal":"test","mode":"article"}' | cf-crawler-win-x64.exe scrape-page --pretty
+> ```
 
 ---
 
@@ -230,9 +236,15 @@ cf-crawler-win-x64.exe health --pretty
 
 **Purpose:** Fetch and extract content from a single URL.
 
-#### Simplest usage (JSON string directly)
+#### Simplest usage (stdin pipe — recommended for PowerShell)
 
 ```powershell
+echo '{"url":"https://example.com","goal":"get page content","mode":"article","strategy":"auto"}' | cf-crawler-win-x64.exe scrape-page --pretty
+```
+
+#### Using --json (bash / cmd only — broken in PowerShell 5.1)
+
+```bash
 cf-crawler-win-x64.exe scrape-page --json '{"url":"https://example.com","goal":"get page content","mode":"article","strategy":"auto"}' --pretty
 ```
 
@@ -432,7 +444,7 @@ cf-crawler-win-x64.exe crawl-site --input .\examples\crawl-site.json --pretty
 #### Passing JSON directly
 
 ```powershell
-cf-crawler-win-x64.exe crawl-site --json '{"seed_url":"https://example.com","goal":"collect all articles","scope":"same_host","max_pages":10,"depth":2,"strategy":"auto"}' --pretty
+echo '{"seed_url":"https://example.com","goal":"collect all articles","scope":"same_host","max_pages":10,"depth":2,"strategy":"auto"}' | cf-crawler-win-x64.exe crawl-site --pretty
 ```
 
 #### All parameters
@@ -615,16 +627,7 @@ depth=2  →  One level deeper than depth=1 (3 levels total)
 #### Basic usage
 
 ```powershell
-cf-crawler-win-x64.exe login --json '{
-  "session_id": "my-session",
-  "login_url": "https://example.com/login",
-  "credentials": {
-    "username_field": "#email",
-    "username": "user@example.com",
-    "password_field": "#password",
-    "password": "secret"
-  }
-}' --pretty
+echo '{"session_id":"my-session","login_url":"https://example.com/login","credentials":{"username_field":"#email","username":"user@example.com","password_field":"#password","password":"secret"}}' | cf-crawler-win-x64.exe login --pretty
 ```
 
 #### All parameters
@@ -674,42 +677,17 @@ cf-crawler-win-x64.exe login --json '{
 
 **Step 1: Login and capture cookies**
 ```powershell
-cf-crawler-win-x64.exe login --json '{
-  "session_id": "forum-session",
-  "login_url": "https://forum.example.com/login",
-  "credentials": {
-    "username_field": "input[name=email]",
-    "username": "myemail@example.com",
-    "password_field": "input[name=password]",
-    "password": "mypassword123"
-  },
-  "submit_selector": "button.login-btn",
-  "success_url_contains": "/dashboard"
-}' --pretty
+echo '{"session_id":"forum-session","login_url":"https://forum.example.com/login","credentials":{"username_field":"input[name=email]","username":"myemail@example.com","password_field":"input[name=password]","password":"mypassword123"},"submit_selector":"button.login-btn","success_url_contains":"/dashboard"}' | cf-crawler-win-x64.exe login --pretty
 ```
 
 **Step 2: Scrape authenticated content using the session**
 ```powershell
-cf-crawler-win-x64.exe scrape-page --json '{
-  "url": "https://forum.example.com/members-only/article",
-  "goal": "Get member-only article",
-  "mode": "article",
-  "strategy": "auto",
-  "session_id": "forum-session"
-}' --pretty
+echo '{"url":"https://forum.example.com/members-only/article","goal":"Get member-only article","mode":"article","strategy":"auto","session_id":"forum-session"}' | cf-crawler-win-x64.exe scrape-page --pretty
 ```
 
 **Step 3: Crawl authenticated pages**
 ```powershell
-cf-crawler-win-x64.exe crawl-site --json '{
-  "seed_url": "https://forum.example.com/members-only/",
-  "goal": "Collect all member articles",
-  "scope": "same_path",
-  "max_pages": 20,
-  "depth": 2,
-  "strategy": "auto",
-  "session_id": "forum-session"
-}' --pretty
+echo '{"seed_url":"https://forum.example.com/members-only/","goal":"Collect all member articles","scope":"same_path","max_pages":20,"depth":2,"strategy":"auto","session_id":"forum-session"}' | cf-crawler-win-x64.exe crawl-site --pretty
 ```
 
 The cookies stored under `forum-session` are automatically injected into every request. New cookies from responses are also saved back to D1.

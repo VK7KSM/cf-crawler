@@ -177,8 +177,14 @@ cf-crawler-win-x64.exe <命令> [选项]
 | 参数 | 说明 |
 |------|------|
 | `--input <文件路径>` | 从 JSON 文件读取输入 |
-| `--json '<JSON字符串>'` | 直接传 JSON 字符串（适合脚本调用） |
+| `--json '<JSON字符串>'` | 直接传 JSON 字符串（仅限 bash/cmd；**PowerShell 5.1 下会损坏双引号**，改用 stdin 管道） |
 | `--pretty` | 输出格式化后的 JSON（人类可读），不加则输出压缩 JSON（适合程序解析） |
+| *stdin 管道* | 通过管道传 JSON：`echo '{"url":"..."}' \| cf-crawler scrape-page`。**PowerShell 推荐用法。** |
+
+> **PowerShell 用户注意：** PowerShell 5.1 将包含双引号的参数传给 native exe 时存在[已知 bug](https://github.com/PowerShell/PowerShell/issues/1995)，会导致 JSON 被空格拆散。请用 `echo` 管道代替 `--json`：
+> ```powershell
+> echo '{"url":"https://example.com","goal":"test","mode":"article"}' | cf-crawler-win-x64.exe scrape-page --pretty
+> ```
 
 ---
 
@@ -230,9 +236,15 @@ cf-crawler-win-x64.exe health --pretty
 
 **作用：** 抓取一个指定 URL 的页面内容。
 
-#### 最简单的用法（直接传 JSON）
+#### 最简单的用法（stdin 管道——PowerShell 推荐）
 
 ```powershell
+echo '{"url":"https://example.com","goal":"获取页面内容","mode":"article","strategy":"auto"}' | cf-crawler-win-x64.exe scrape-page --pretty
+```
+
+#### 用 --json 传参（仅限 bash/cmd——PowerShell 5.1 下会失败）
+
+```bash
 cf-crawler-win-x64.exe scrape-page --json '{"url":"https://example.com","goal":"获取页面内容","mode":"article","strategy":"auto"}' --pretty
 ```
 
@@ -432,7 +444,7 @@ cf-crawler-win-x64.exe crawl-site --input .\examples\crawl-site.json --pretty
 #### 直接传 JSON
 
 ```powershell
-cf-crawler-win-x64.exe crawl-site --json '{"seed_url":"https://example.com","goal":"收集所有文章","scope":"same_host","max_pages":10,"depth":2,"strategy":"auto"}' --pretty
+echo '{"seed_url":"https://example.com","goal":"收集所有文章","scope":"same_host","max_pages":10,"depth":2,"strategy":"auto"}' | cf-crawler-win-x64.exe crawl-site --pretty
 ```
 
 #### 所有参数说明
@@ -615,16 +627,7 @@ depth=2：在 depth=1 基础上再深一层（共 3 层）
 #### 基本用法
 
 ```powershell
-cf-crawler-win-x64.exe login --json '{
-  "session_id": "my-session",
-  "login_url": "https://example.com/login",
-  "credentials": {
-    "username_field": "#email",
-    "username": "user@example.com",
-    "password_field": "#password",
-    "password": "secret"
-  }
-}' --pretty
+echo '{"session_id":"my-session","login_url":"https://example.com/login","credentials":{"username_field":"#email","username":"user@example.com","password_field":"#password","password":"secret"}}' | cf-crawler-win-x64.exe login --pretty
 ```
 
 #### 所有参数说明
@@ -674,42 +677,17 @@ cf-crawler-win-x64.exe login --json '{
 
 **第一步：登录并捕获 Cookie**
 ```powershell
-cf-crawler-win-x64.exe login --json '{
-  "session_id": "forum-session",
-  "login_url": "https://forum.example.com/login",
-  "credentials": {
-    "username_field": "input[name=email]",
-    "username": "myemail@example.com",
-    "password_field": "input[name=password]",
-    "password": "mypassword123"
-  },
-  "submit_selector": "button.login-btn",
-  "success_url_contains": "/dashboard"
-}' --pretty
+echo '{"session_id":"forum-session","login_url":"https://forum.example.com/login","credentials":{"username_field":"input[name=email]","username":"myemail@example.com","password_field":"input[name=password]","password":"mypassword123"},"submit_selector":"button.login-btn","success_url_contains":"/dashboard"}' | cf-crawler-win-x64.exe login --pretty
 ```
 
 **第二步：用该 Session 抓取需要登录的内容**
 ```powershell
-cf-crawler-win-x64.exe scrape-page --json '{
-  "url": "https://forum.example.com/members-only/article",
-  "goal": "获取会员专属文章",
-  "mode": "article",
-  "strategy": "auto",
-  "session_id": "forum-session"
-}' --pretty
+echo '{"url":"https://forum.example.com/members-only/article","goal":"获取会员专属文章","mode":"article","strategy":"auto","session_id":"forum-session"}' | cf-crawler-win-x64.exe scrape-page --pretty
 ```
 
 **第三步：用该 Session 批量爬取登录后的页面**
 ```powershell
-cf-crawler-win-x64.exe crawl-site --json '{
-  "seed_url": "https://forum.example.com/members-only/",
-  "goal": "收集所有会员文章",
-  "scope": "same_path",
-  "max_pages": 20,
-  "depth": 2,
-  "strategy": "auto",
-  "session_id": "forum-session"
-}' --pretty
+echo '{"seed_url":"https://forum.example.com/members-only/","goal":"收集所有会员文章","scope":"same_path","max_pages":20,"depth":2,"strategy":"auto","session_id":"forum-session"}' | cf-crawler-win-x64.exe crawl-site --pretty
 ```
 
 `forum-session` 下存储的 Cookie 会自动注入每个请求，响应中的新 Cookie 也会自动保存回 D1。

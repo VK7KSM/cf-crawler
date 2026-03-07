@@ -57,6 +57,17 @@ async function loadPayload(flags: { input?: string; json?: string }) {
         const content = await readFile(path, "utf8");
         return parseJsonText(content);
     }
+    // Read from stdin if piped (not a TTY)
+    if (!process.stdin.isTTY) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of process.stdin) {
+            chunks.push(chunk);
+        }
+        const text = Buffer.concat(chunks).toString("utf8").trim();
+        if (text.length > 0) {
+            return parseJsonText(text);
+        }
+    }
     return {};
 }
 
@@ -104,6 +115,7 @@ main().catch((error) => {
         success: false,
         error: String(error instanceof Error ? error.message : error),
     };
-    process.stdout.write(`${JSON.stringify(out)}\\n`);
+    process.stderr.write(`${out.error}\n`);
+    process.stdout.write(`${JSON.stringify(out)}\n`);
     process.exit(1);
 });
