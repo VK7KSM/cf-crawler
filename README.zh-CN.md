@@ -1,183 +1,162 @@
 ﻿# cf-crawler
 
-`cf-crawler` 是一个外部抓取工具。
+`cf-crawler` 是给 `elfclaw / zeroclaw` 用的网页抓取工具。
 
-你可以把它理解成：
-- 本地 EXE：负责发任务、收结果、保存结果
-- Cloudflare Worker：负责真正去访问网页
+一句话说明：
+- `cf-crawler` 负责普通网页抓取
+- `Agent-Reach` 负责平台型来源抓取
+- 它们是两个独立工具
 
-这样做的目的很简单：
-- 不用本地浏览器
-- 抓取出口走 Cloudflare IP
-- 本地电脑压力小
+## Agent-Reach 和 cf-crawler 是什么关系
 
-## 这个程序是干什么的
+### `cf-crawler` 是什么
 
-它现在主要做 4 件事：
+`cf-crawler` 负责抓普通网页，例如：
+- 新闻正文
+- 文章页
+- 列表页
+- 分页页
 
-1. 抓单个网页
-- 命令：`scrape-page`
-- 适合新闻正文、文章页、单个列表页
+它通过 Cloudflare Worker / Browser Rendering 去访问网页。
 
-2. 抓站点里的多页内容
-- 命令：`crawl-site`
-- 适合首页、频道页、分页列表页
+### `Agent-Reach` 是什么
 
-3. 检查 Cloudflare Worker 是否在线
-- 命令：`health`
+`Agent-Reach` 是平台接入工具。
+它主要处理：
+- GitHub
+- YouTube
+- RSS
+- X / Twitter
+- 以及它自己支持的其他平台
 
-4. 检查 / 安装 / 更新 Agent-Reach
-- 命令：`agent-reach-ensure`
+### 它们是不是一个程序
 
-## 现在已经开通了什么
+不是。
 
-当前项目已经接通：
+它们是两个独立模块：
+- `cf-crawler`：独立 EXE，独立命令
+- `Agent-Reach`：独立 Python CLI，独立命令
+
+### 那为什么 `cf-crawler` 里还有 `agent-reach-ensure`
+
+这个命令不是抓取命令。
+它只是一个“维护命令”，作用只有 3 个：
+- 检查 Agent-Reach 有没有安装
+- 没安装时尝试安装
+- 运行 `doctor` 看它是否可用
+
+也就是说：
+- 平时抓网页，不需要这个命令
+- 平时抓平台数据，也不靠这个命令
+- 它只是帮你维护 Agent-Reach 环境
+
+如果以后你想让两者彻底分离，这个命令也可以删掉。
+
+## 当前已经开通了什么
+
+当前 `cf-crawler` 已经接通：
 - Cloudflare Workers
 - Cloudflare Browser Rendering
 
 也就是说：
-- 普通页面先走 `fetch`
+- 普通页面可以走 `fetch`
 - 难抓页面可以走 `edge_browser`
 
 只要 `health` 返回 `browser_rendering: true`，就说明浏览器模式已经可用。
 
-## 你要分清楚的 2 种“密钥”
-
-很多人第一次看这个项目会混乱，这里直接说清楚。
+## Cloudflare 这边有两类东西，不要搞混
 
 ### 1. Cloudflare 登录授权
 
-这个不是你自己随便写的。
-这是 `wrangler login` 打开浏览器以后，Cloudflare 给本机命令行的授权。
+命令：
+```bash
+npx wrangler login
+```
 
 作用：
 - 允许你部署 Worker
 - 允许你更新 Worker 配置和 secret
 
-命令：
-```bash
-npx wrangler login
-```
-
 ### 2. `CF_CRAWLER_TOKEN`
-
-这个是 `cf-crawler` 自己的访问密钥。
-是你自己定义的一串随机字符串。
-
-作用：
-- 防止别人直接调用你的 Worker 抓网页
-- 本地 EXE 调 Worker 时，要带这个 token
 
 命令：
 ```bash
 npx wrangler secret put CF_CRAWLER_TOKEN
 ```
 
-执行后，终端会让你输入一个值。
-你可以自己输入一串随机字符串，例如：
+作用：
+- 防止别人直接调用你的 Worker
+- 本地 EXE 访问 Worker 时必须带这个 token
+
+这个值是你自己定义的一串随机字符串。
+例如：
 ```text
 my-cf-crawler-secret-20260307
 ```
 
-然后本地程序也要用同一个值。
-
 ## 部署到 Cloudflare 的步骤
-
-### 第 1 步：进入 Worker 目录
 
 ```bash
 cd C:\Dev\cf-crawler\worker
-```
-
-### 第 2 步：安装依赖
-
-```bash
 npm.cmd install
-```
-
-### 第 3 步：登录 Cloudflare
-
-```bash
 npx wrangler login
-```
-
-这一步会弹浏览器。
-你只要在浏览器里登录 Cloudflare 并授权就行。
-
-### 第 4 步：创建 `cf-crawler` 自己的访问密钥
-
-```bash
 npx wrangler secret put CF_CRAWLER_TOKEN
-```
-
-终端会提示你输入一个值。
-这个值就是以后本地程序访问 Worker 的密码。
-
-### 第 5 步：部署 Worker
-
-```bash
 npx wrangler deploy
 ```
 
-部署成功后，终端会输出一个地址，例如：
+部署成功后，你会得到一个地址，例如：
 ```text
 https://cf-crawler-worker.xxx.workers.dev
 ```
 
-这个地址就是你的 Worker 地址。
+## 本地怎么连接 Cloudflare Worker
 
-## 本地程序怎么连接 Cloudflare Worker
-
-本地 EXE 只需要 2 个环境变量：
-
+本地 EXE 需要两个环境变量：
 - `CF_CRAWLER_ENDPOINT`
 - `CF_CRAWLER_TOKEN`
 
 例子：
-
 ```powershell
 $env:CF_CRAWLER_ENDPOINT='https://cf-crawler-worker.xxx.workers.dev'
-$env:CF_CRAWLER_TOKEN='你刚才设置的CF_CRAWLER_TOKEN'
+$env:CF_CRAWLER_TOKEN='你自己设置的CF_CRAWLER_TOKEN'
 ```
 
-然后就可以运行：
+## cf-crawler 的业务命令
 
+这 3 个才是平时真正抓取要用的命令。
+
+### 1. `health`
+
+作用：
+- 检查 Worker 是否在线
+- 检查 Browser Rendering 是否已开启
+
+示例：
 ```powershell
 cf-crawler-win-x64.exe health --pretty
 ```
 
-如果返回正常 JSON，就说明已经连通。
+### 2. `scrape-page`
 
-## 最常用的 4 个命令
+作用：
+- 抓单个页面
 
-### 1. 检查 Worker 是否在线
-
-```powershell
-cf-crawler-win-x64.exe health --pretty
-```
-
-### 2. 检查 Agent-Reach
-
-```powershell
-cf-crawler-win-x64.exe agent-reach-ensure --pretty
-```
-
-### 3. 抓单个网页
-
+示例：
 ```powershell
 cf-crawler-win-x64.exe scrape-page --input .\examples\scrape-page.json --pretty
 ```
 
-### 4. 抓站点多页
-
-```powershell
-cf-crawler-win-x64.exe crawl-site --input .\examples\crawl-site.json --pretty
+示例 JSON：
+```json
+{
+  "url": "https://example.com",
+  "goal": "抓正文",
+  "mode": "article",
+  "strategy": "auto"
+}
 ```
 
-## 如果要强制使用浏览器模式怎么写
-
-你可以在 `scrape-page` 的输入 JSON 里这样写：
-
+强制浏览器模式：
 ```json
 {
   "url": "https://example.com",
@@ -187,42 +166,164 @@ cf-crawler-win-x64.exe crawl-site --input .\examples\crawl-site.json --pretty
 }
 ```
 
-说明：
-- `auto`：默认模式，先 fetch，不行再升级 browser
-- `edge_fetch`：只用普通抓取
-- `edge_browser`：直接用 Cloudflare Browser Rendering
+### 3. `crawl-site`
 
-## 输入文件在哪里
+作用：
+- 从起始页面往下抓多个页面
 
-示例文件：
+示例：
+```powershell
+cf-crawler-win-x64.exe crawl-site --input .\examples\crawl-site.json --pretty
+```
+
+示例 JSON：
+```json
+{
+  "seed_url": "https://example.com",
+  "goal": "抓站点文章列表",
+  "scope": "same_host",
+  "max_pages": 5,
+  "depth": 2,
+  "strategy": "auto"
+}
+```
+
+## cf-crawler 的维护命令
+
+### `agent-reach-ensure`
+
+作用：
+- 检查 Agent-Reach 是否安装
+- 没安装就尝试安装
+- 安装后运行 `doctor`
+
+这个命令不是网页抓取命令。
+它只是给你省事用的环境维护命令。
+
+示例：
+```powershell
+cf-crawler-win-x64.exe agent-reach-ensure --pretty
+```
+
+## Agent-Reach 的所有命令和示例
+
+注意：
+- 如果系统里没有 `agent-reach` 命令
+- 就用 `python -m agent_reach.cli`
+
+等价写法：
+```bash
+agent-reach doctor
+python -m agent_reach.cli doctor
+```
+
+### 1. `setup`
+
+作用：
+- 进入交互式配置流程
+
+示例：
+```bash
+agent-reach setup
+```
+
+### 2. `install`
+
+作用：
+- 安装 Agent-Reach 依赖
+
+示例：
+```bash
+agent-reach install --env auto
+agent-reach install --env server
+agent-reach install --env auto --safe
+agent-reach install --env auto --dry-run
+agent-reach install --env server --proxy http://user:pass@ip:port
+```
+
+### 3. `configure`
+
+作用：
+- 写配置
+- 或从浏览器提取 cookie
+
+示例：
+```bash
+agent-reach configure github-token ghp_xxxxxxxxxxxx
+agent-reach configure proxy http://user:pass@ip:port
+agent-reach configure --from-browser chrome
+```
+
+### 4. `doctor`
+
+作用：
+- 查看当前哪些平台可用
+
+示例：
+```bash
+agent-reach doctor
+```
+
+### 5. `uninstall`
+
+作用：
+- 卸载 Agent-Reach 配置和 skill 文件
+
+示例：
+```bash
+agent-reach uninstall
+agent-reach uninstall --dry-run
+agent-reach uninstall --keep-config
+```
+
+### 6. `check-update`
+
+作用：
+- 检查新版本
+
+示例：
+```bash
+agent-reach check-update
+```
+
+### 7. `watch`
+
+作用：
+- 健康检查 + 更新检查
+- 很适合定时任务
+
+示例：
+```bash
+agent-reach watch
+```
+
+### 8. `version`
+
+作用：
+- 查看当前版本
+
+示例：
+```bash
+agent-reach version
+```
+
+## 示例输入文件
+
 - [scrape-page.json](C:/Dev/cf-crawler/examples/scrape-page.json)
 - [crawl-site.json](C:/Dev/cf-crawler/examples/crawl-site.json)
 
-`scrape-page` 常用字段：
-- `url`：要抓的网页
-- `goal`：抓取目的
-- `mode`：`article` / `listing` / `raw`
-- `strategy`：`auto` / `edge_fetch` / `edge_browser`
-
-`crawl-site` 常用字段：
-- `seed_url`：起始页面
-- `max_pages`：最多抓多少页
-- `depth`：向下抓几层
-- `scope`：抓取范围限制
-
 ## 输出结果是什么
 
-输出统一是 JSON。
-
-最重要的字段：
-- `success`：成功还是失败
-- `strategy_used`：最终用了哪种模式
-- `final_url`：最后打开的 URL
-- `title`：页面标题
-- `markdown`：提取出的正文
-- `items`：抓到的文章/链接列表
-- `anti_bot_signals`：检测到的反爬信号
-- `diagnostics`：耗时、重试次数等
+`cf-crawler` 输出统一是 JSON。
+主要字段：
+- `success`
+- `strategy_used`
+- `final_url`
+- `title`
+- `markdown`
+- `items`
+- `anti_bot_signals`
+- `diagnostics`
 
 ## 怎么生成 Windows EXE
 
@@ -241,30 +342,64 @@ npm.cmd run build:exe
 - 会自动更新 `latest` Release
 - 打 `v1.0.0` 这种 tag 后，会自动创建正式版本 Release
 
-所以正常情况下，你以后直接去 GitHub 的 Releases 页面下载就行。
+## 给 elfclaw 的调用规则
 
-## elfclaw 以后怎么用它
+- 普通网页、新闻站、文章页、列表页、分页页：调用 `cf-crawler`
+- GitHub、YouTube、RSS、X 等平台型来源：调用 `Agent-Reach`
+- 抓取前先健康检查：
+  - `cf-crawler-win-x64.exe health --pretty`
+  - `agent-reach watch`
 
-以后 elfclaw 不需要把抓取代码写进自己主程序里。
-更简单的方式是：
-- elfclaw 调用这个 EXE
-- 给它传 JSON 输入
-- 读取它返回的 JSON 结果
+## 给 elfclaw 的 cron job 模板
 
-这样做的好处：
-- elfclaw 主程序更干净
-- 抓取模块可以单独升级
-- Agent-Reach 继续独立存在
+### 每小时做一次健康检查
 
-## 和 Agent-Reach 怎么分工
+cron：
+```text
+0 * * * *
+```
 
-建议这样分：
-- `cf-crawler`：普通网页、新闻站、文章页、列表页、分页页
-- `Agent-Reach`：GitHub、YouTube、RSS、X 这类平台型来源
+执行内容：
+```powershell
+cf-crawler-win-x64.exe health --pretty
+agent-reach watch
+```
 
-简单说：
-- 普通网站交给 `cf-crawler`
-- 平台来源交给 `Agent-Reach`
+### 每 30 分钟抓一次新闻列表页
+
+cron：
+```text
+*/30 * * * *
+```
+
+执行内容：
+```powershell
+cf-crawler-win-x64.exe crawl-site --input C:\path\to\news-list.json --pretty
+```
+
+### 每天早上 8 点抓一次重点文章页
+
+cron：
+```text
+0 8 * * *
+```
+
+执行内容：
+```powershell
+cf-crawler-win-x64.exe scrape-page --input C:\path\to\article.json --pretty
+```
+
+### 每天凌晨 3 点检查 Agent-Reach 更新
+
+cron：
+```text
+0 3 * * *
+```
+
+执行内容：
+```powershell
+agent-reach check-update
+```
 
 ## 参考项目
 
