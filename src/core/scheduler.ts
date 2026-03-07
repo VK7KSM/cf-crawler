@@ -1,4 +1,4 @@
-﻿import type pino from "pino";
+import type pino from "pino";
 import { DedupeSet } from "./dedupe.js";
 import { UrlQueue } from "./queue.js";
 import { HostRateLimiter } from "./rate_limit.js";
@@ -6,7 +6,9 @@ import { withRetry } from "./retry.js";
 import { shouldUpgradeToRender } from "../executors/decision.js";
 import { cfFetch } from "../executors/cf_fetch.js";
 import { cfRender } from "../executors/cf_render.js";
-import type { RemoteResponse } from "../executors/types.js";
+import { cfBatchFetch } from "../executors/cf_batch.js";
+import { cfSitemap } from "../executors/cf_sitemap.js";
+import type { ExecutorConfig, RemoteResponse } from "../executors/types.js";
 import { extractArticle } from "../extractors/article.js";
 import { extractListing } from "../extractors/listing.js";
 import { extractPaginationLinks } from "../extractors/pagination.js";
@@ -20,6 +22,7 @@ interface SchedulerOptions {
     timeoutMs: number;
     maxRetries: number;
     hostCooldownMs: number;
+    batchSize: number;
     urlPolicy: UrlPolicy;
     logger: pino.Logger;
 }
@@ -38,6 +41,55 @@ function allowByScope(seed: URL, target: URL, scope: CrawlSiteInput["scope"]): b
     return true;
 }
 
+async function fetchSinglePage(
+    url: string,
+    strategy: CrawlSiteInput["strategy"],
+    execCfg: ExecutorConfig,
+    maxRetries: number,
+    extraPayload: Record<string, unknown>,
+): Promise<{ remote: RemoteResponse; strategy: "edge_fetch" | "edge_browser"; retries: number }> {
+    let retries = 0;
+    let strategyUsed: "edge_fetch" | "edge_browser" = strategy === "edge_browser" ? "edge_browser" : "edge_fetch";
+
+    const payload = {
+        url,
+        timeout_ms: execCfg.timeoutMs,
+        mode: strategy === "edge_browser" ? "article" : "raw",
+        ...extraPayload,
+    };
+
+    let remote: RemoteResponse;
+
+    if (strategy === "edge_browser") {
+        const r = await withRetry(() => cfRender(execCfg, payload), maxRetries);
+        retries += r.retries;
+        remote = r.value;
+    } else if (strategy === "edge_fetch") {
+        const r = await withRetry(() => cfFetch(execCfg, payload), maxRetries);
+        retries += r.retries;
+        remote = r.value;
+    } else {
+        // auto
+        const fetchR = await withRetry(() => cfFetch(execCfg, payload), maxRetries);
+        retries += fetchR.retries;
+        remote = fetchR.value;
+
+        if (shouldUpgradeToRender(fetchR.value)) {
+            const renderR = await withRetry(
+                () => cfRender(execCfg, { url, mode: "article", timeout_ms: execCfg.timeoutMs, ...extraPayload }),
+                maxRetries,
+            );
+            retries += renderR.retries;
+            if (renderR.value.ok) {
+                remote = renderR.value;
+                strategyUsed = "edge_browser";
+            }
+        }
+    }
+
+    return { remote, strategy: strategyUsed, retries };
+}
+
 export async function runCrawlScheduler(opts: SchedulerOptions): Promise<ToolResult> {
     const started = Date.now();
     const { input, logger } = opts;
@@ -48,132 +100,149 @@ export async function runCrawlScheduler(opts: SchedulerOptions): Promise<ToolRes
     const queue = new UrlQueue();
     const dedupe = new DedupeSet();
     const limiter = new HostRateLimiter(opts.hostCooldownMs);
+    const execCfg: ExecutorConfig = { endpoint: opts.endpoint, token: opts.token, timeoutMs: opts.timeoutMs };
+    const extraPayload: Record<string, unknown> = {};
+    if (input.session_id) extraPayload.session_id = input.session_id;
+    if (input.device_type) extraPayload.device_type = input.device_type;
 
-    queue.enqueue({ url: seed.toString(), depth: 0 });
-    dedupe.addUrl(seed.toString());
+    // If sitemap_url is provided, fetch sitemap URLs and use them as the initial queue
+    if (input.sitemap_url) {
+        logger.info({ sitemap_url: input.sitemap_url }, "fetching sitemap");
+        const sitemapResult = await cfSitemap(execCfg, {
+            url: input.sitemap_url,
+            timeout_ms: opts.timeoutMs,
+        });
+
+        if (sitemapResult.ok && sitemapResult.urls.length > 0) {
+            logger.info({ count: sitemapResult.urls.length }, "sitemap URLs loaded");
+            for (const url of sitemapResult.urls) {
+                try {
+                    const parsed = new URL(url);
+                    if (!allowByScope(seed, parsed, input.scope)) continue;
+                    if (include.length > 0 && !include.some((r) => r.test(url))) continue;
+                    if (exclude.some((r) => r.test(url))) continue;
+
+                    const normalized = parsed.toString();
+                    if (dedupe.hasUrl(normalized)) continue;
+
+                    await opts.urlPolicy.assertAllowed(normalized);
+                    dedupe.addUrl(normalized);
+                    queue.enqueue({ url: normalized, depth: 0 });
+                } catch {
+                    logger.debug({ url }, "skip sitemap URL (blocked or invalid)");
+                }
+            }
+        } else {
+            logger.warn({ error: sitemapResult.error }, "sitemap fetch failed, falling back to BFS");
+        }
+    }
+
+    // If no sitemap URLs were added, seed normally
+    if (queue.size === 0) {
+        queue.enqueue({ url: seed.toString(), depth: 0 });
+        dedupe.addUrl(seed.toString());
+    }
 
     const pages: CrawlPage[] = [];
     const items: CrawlItem[] = [];
     let retries = 0;
+    const batchSize = opts.batchSize;
 
+    // Batch processing loop
     while (queue.size > 0 && pages.length < input.max_pages) {
-        const task = queue.dequeue();
-        if (!task) {
-            break;
+        // Collect a batch of URLs from the queue
+        const batch: Array<{ url: string; depth: number }> = [];
+        while (batch.length < batchSize && queue.size > 0 && pages.length + batch.length < input.max_pages) {
+            const task = queue.dequeue();
+            if (!task) break;
+            batch.push(task);
         }
 
-        await limiter.waitFor(task.url);
+        if (batch.length === 0) break;
 
-        let remote: RemoteResponse;
-        let strategy: "edge_fetch" | "edge_browser" = input.strategy === "edge_browser" ? "edge_browser" : "edge_fetch";
+        // For edge_fetch/auto with batchSize > 1 and no render needed, use batch-fetch
+        if (batch.length > 1 && input.strategy !== "edge_browser") {
+            // Wait for rate limiter for each URL
+            for (const task of batch) {
+                await limiter.waitFor(task.url);
+            }
 
-        try {
-            await opts.urlPolicy.assertAllowed(task.url);
+            // Validate URLs
+            const validBatch: Array<{ url: string; depth: number }> = [];
+            for (const task of batch) {
+                try {
+                    await opts.urlPolicy.assertAllowed(task.url);
+                    validBatch.push(task);
+                } catch (error) {
+                    logger.warn({ url: task.url, err: String(error) }, "URL blocked, skip");
+                }
+            }
 
-            const payload = {
-                url: task.url,
-                timeout_ms: opts.timeoutMs,
-                mode: input.strategy === "edge_browser" ? "article" : "raw",
-            };
+            if (validBatch.length === 0) continue;
 
-            if (input.strategy === "edge_browser") {
-                const renderResult = await withRetry(
-                    () => cfRender({ endpoint: opts.endpoint, token: opts.token, timeoutMs: opts.timeoutMs }, payload),
-                    opts.maxRetries,
-                );
-                retries += renderResult.retries;
-                remote = renderResult.value;
-            } else if (input.strategy === "edge_fetch") {
-                const fetchResult = await withRetry(
-                    () => cfFetch({ endpoint: opts.endpoint, token: opts.token, timeoutMs: opts.timeoutMs }, payload),
-                    opts.maxRetries,
-                );
-                retries += fetchResult.retries;
-                remote = fetchResult.value;
-            } else {
-                const fetchResult = await withRetry(
-                    () => cfFetch({ endpoint: opts.endpoint, token: opts.token, timeoutMs: opts.timeoutMs }, payload),
-                    opts.maxRetries,
-                );
-                retries += fetchResult.retries;
-                remote = fetchResult.value;
+            // Use batch-fetch endpoint
+            try {
+                const batchResult = await cfBatchFetch(execCfg, {
+                    urls: validBatch.map((t) => t.url),
+                    mode: "raw",
+                    timeout_ms: opts.timeoutMs,
+                    session_id: input.session_id,
+                    device_type: input.device_type,
+                });
 
-                if (shouldUpgradeToRender(fetchResult.value)) {
-                    const renderResult = await withRetry(
-                        () =>
-                            cfRender(
-                                { endpoint: opts.endpoint, token: opts.token, timeoutMs: opts.timeoutMs },
-                                {
-                                    url: task.url,
-                                    mode: "article",
-                                    timeout_ms: opts.timeoutMs,
-                                },
-                            ),
-                        opts.maxRetries,
-                    );
-                    retries += renderResult.retries;
-                    if (renderResult.value.ok) {
-                        remote = renderResult.value;
-                        strategy = "edge_browser";
+                for (let i = 0; i < validBatch.length; i++) {
+                    const task = validBatch[i];
+                    const remote = batchResult.results?.[i] as RemoteResponse | undefined;
+                    if (!remote) continue;
+
+                    let strategyUsed: "edge_fetch" | "edge_browser" = "edge_fetch";
+
+                    // Auto-upgrade if needed
+                    if (input.strategy === "auto" && shouldUpgradeToRender(remote)) {
+                        try {
+                            const renderR = await withRetry(
+                                () => cfRender(execCfg, { url: task.url, mode: "article", timeout_ms: opts.timeoutMs, ...extraPayload }),
+                                opts.maxRetries,
+                            );
+                            retries += renderR.retries;
+                            if (renderR.value.ok) {
+                                processPage(task, renderR.value, "edge_browser", pages, items, dedupe, queue, seed, input, include, exclude, opts, logger);
+                                continue;
+                            }
+                        } catch (error) {
+                            logger.warn({ url: task.url, err: String(error) }, "render upgrade failed");
+                        }
+                    }
+
+                    processPage(task, remote, strategyUsed, pages, items, dedupe, queue, seed, input, include, exclude, opts, logger);
+                }
+            } catch (error) {
+                // Batch failed, fall back to sequential
+                logger.warn({ err: String(error) }, "batch-fetch failed, falling back to sequential");
+                for (const task of validBatch) {
+                    try {
+                        await limiter.waitFor(task.url);
+                        const result = await fetchSinglePage(task.url, input.strategy, execCfg, opts.maxRetries, extraPayload);
+                        retries += result.retries;
+                        processPage(task, result.remote, result.strategy, pages, items, dedupe, queue, seed, input, include, exclude, opts, logger);
+                    } catch (error) {
+                        logger.warn({ url: task.url, err: String(error) }, "page crawl failed, skip");
                     }
                 }
             }
-        } catch (error) {
-            logger.warn({ url: task.url, err: String(error) }, "page crawl failed, skip");
-            continue;
-        }
+        } else {
+            // Sequential processing (single URL or edge_browser)
+            for (const task of batch) {
+                try {
+                    await limiter.waitFor(task.url);
+                    await opts.urlPolicy.assertAllowed(task.url);
 
-        const html = remote.html ?? remote.body ?? "";
-        const article = extractArticle(html);
-        const listing = extractListing(task.url, html);
-        const pagerLinks = extractPaginationLinks(task.url, html);
-
-        pages.push({
-            url: task.url,
-            final_url: remote.final_url ?? task.url,
-            status: remote.status,
-            strategy_used: strategy,
-            title: remote.title ?? article.title,
-            markdown: remote.markdown ?? article.markdown,
-            anti_bot_signals: remote.anti_bot_signals ?? [],
-        });
-
-        for (const entry of listing.items) {
-            if (!dedupe.hasContent(entry.title + entry.summary)) {
-                dedupe.addContent(entry.title + entry.summary);
-                items.push(entry);
-            }
-        }
-
-        if (task.depth >= input.depth) {
-            continue;
-        }
-
-        const candidateLinks = [...listing.links, ...pagerLinks];
-        for (const link of candidateLinks) {
-            try {
-                const parsed = new URL(link);
-                if (!allowByScope(seed, parsed, input.scope)) {
-                    continue;
+                    const result = await fetchSinglePage(task.url, input.strategy, execCfg, opts.maxRetries, extraPayload);
+                    retries += result.retries;
+                    processPage(task, result.remote, result.strategy, pages, items, dedupe, queue, seed, input, include, exclude, opts, logger);
+                } catch (error) {
+                    logger.warn({ url: task.url, err: String(error) }, "page crawl failed, skip");
                 }
-                if (include.length > 0 && !include.some((regex) => regex.test(parsed.toString()))) {
-                    continue;
-                }
-                if (exclude.some((regex) => regex.test(parsed.toString()))) {
-                    continue;
-                }
-
-                const normalized = parsed.toString();
-                await opts.urlPolicy.assertAllowed(normalized);
-
-                if (dedupe.hasUrl(normalized)) {
-                    continue;
-                }
-
-                dedupe.addUrl(normalized);
-                queue.enqueue({ url: normalized, depth: task.depth + 1 });
-            } catch {
-                logger.debug({ link }, "skip malformed or blocked link");
             }
         }
     }
@@ -197,4 +266,65 @@ export async function runCrawlScheduler(opts: SchedulerOptions): Promise<ToolRes
         },
         pages,
     };
+}
+
+function processPage(
+    task: { url: string; depth: number },
+    remote: RemoteResponse,
+    strategyUsed: "edge_fetch" | "edge_browser",
+    pages: CrawlPage[],
+    items: CrawlItem[],
+    dedupe: DedupeSet,
+    queue: UrlQueue,
+    seed: URL,
+    input: CrawlSiteInput,
+    include: RegExp[],
+    exclude: RegExp[],
+    opts: SchedulerOptions,
+    logger: pino.Logger,
+): void {
+    const html = remote.html ?? remote.body ?? "";
+    const article = extractArticle(html);
+    const listing = extractListing(task.url, html);
+    const pagerLinks = extractPaginationLinks(task.url, html);
+
+    pages.push({
+        url: task.url,
+        final_url: remote.final_url ?? task.url,
+        status: remote.status,
+        strategy_used: strategyUsed,
+        title: remote.title ?? article.title,
+        markdown: remote.markdown ?? article.markdown,
+        anti_bot_signals: remote.anti_bot_signals ?? [],
+    });
+
+    for (const entry of listing.items) {
+        if (!dedupe.hasContent(entry.title + entry.summary)) {
+            dedupe.addContent(entry.title + entry.summary);
+            items.push(entry);
+        }
+    }
+
+    if (task.depth >= input.depth) return;
+
+    const candidateLinks = [...listing.links, ...pagerLinks];
+    for (const link of candidateLinks) {
+        try {
+            const parsed = new URL(link);
+            if (!allowByScope(seed, parsed, input.scope)) continue;
+            if (include.length > 0 && !include.some((regex) => regex.test(parsed.toString()))) continue;
+            if (exclude.some((regex) => regex.test(parsed.toString()))) continue;
+
+            const normalized = parsed.toString();
+            opts.urlPolicy.assertAllowed(normalized).then(() => {
+                if (dedupe.hasUrl(normalized)) return;
+                dedupe.addUrl(normalized);
+                queue.enqueue({ url: normalized, depth: task.depth + 1 });
+            }).catch(() => {
+                logger.debug({ link: normalized }, "skip blocked link");
+            });
+        } catch {
+            logger.debug({ link }, "skip malformed link");
+        }
+    }
 }

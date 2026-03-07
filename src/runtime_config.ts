@@ -56,6 +56,7 @@ export interface RuntimeConfig {
     maxRetries: number;
     allowedHosts: string[];
     blockPrivateIp: boolean;
+    batchSize: number;
     agentReachCommand?: string;
     agentReachMinVersion?: string;
     agentReachAutoUpdate: boolean;
@@ -72,6 +73,7 @@ export function loadRuntimeConfig(): RuntimeConfig {
         maxRetries: parseIntEnv("CF_CRAWLER_MAX_RETRIES", 2, 0, 8),
         allowedHosts: parseCsvEnv("CF_CRAWLER_ALLOWED_HOSTS"),
         blockPrivateIp: parseBoolEnv("CF_CRAWLER_BLOCK_PRIVATE_IP", true),
+        batchSize: parseIntEnv("CF_CRAWLER_BATCH_SIZE", 3, 1, 10),
         agentReachCommand: process.env.AGENT_REACH_COMMAND,
         agentReachMinVersion: process.env.AGENT_REACH_MIN_VERSION,
         agentReachAutoUpdate: parseBoolEnv("AGENT_REACH_AUTO_UPDATE", true),

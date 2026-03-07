@@ -28,10 +28,11 @@ export interface ScrapePageInput {
     url: string;
     goal: string;
     mode: "article" | "feed" | "listing" | "raw" | "screenshot";
-    strategy?: "auto" | "edge_fetch" | "edge_browser";
+    strategy?: "auto" | "edge_fetch" | "edge_browser" | "paywall_bypass";
     selectors?: string[];
     session_id?: string;
     persist_path?: string;
+    device_type?: "desktop" | "mobile" | "auto";
 }
 
 export interface CrawlSiteInput {
@@ -44,6 +45,23 @@ export interface CrawlSiteInput {
     exclude_patterns?: string[];
     strategy?: "auto" | "edge_fetch" | "edge_browser";
     persist_path?: string;
+    session_id?: string;
+    sitemap_url?: string;
+    device_type?: "desktop" | "mobile" | "auto";
+}
+
+export interface LoginInput {
+    session_id: string;
+    login_url: string;
+    credentials: {
+        username_field: string;
+        username: string;
+        password_field: string;
+        password: string;
+    };
+    submit_selector?: string;
+    success_url_contains?: string;
+    device_type?: "desktop" | "mobile" | "auto";
 }
 
 export interface ToolResult {
@@ -56,4 +74,5 @@ export interface ToolResult {
     anti_bot_signals: string[];
     diagnostics: Diagnostics;
     pages?: CrawlPage[];
+    bypass_strategy_used?: string;
 }

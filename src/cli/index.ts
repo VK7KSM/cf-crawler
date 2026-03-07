@@ -4,6 +4,7 @@ import pino from "pino";
 import { z } from "zod";
 import { runAgentReachEnsure } from "./commands/agent-reach-ensure.js";
 import { runCrawlSite } from "./commands/crawl-site.js";
+import { runLogin } from "./commands/login.js";
 import { runScrapePage } from "./commands/scrape-page.js";
 import { cfHealth } from "../executors/cf_health.js";
 import { loadRuntimeConfig } from "../runtime_config.js";
@@ -13,10 +14,10 @@ const logger = pino({ name: "cf-crawler" });
 const argv = process.argv.slice(2);
 
 const command = argv[0];
-const allowedCommands = new Set(["scrape-page", "crawl-site", "health", "agent-reach-ensure"]);
+const allowedCommands = new Set(["scrape-page", "crawl-site", "health", "agent-reach-ensure", "login"]);
 if (!command || !allowedCommands.has(command)) {
     process.stderr.write(
-        "Usage: cf-crawler <scrape-page|crawl-site|health|agent-reach-ensure> [--input <file>] [--json <json>] [--pretty]\\n",
+        "Usage: cf-crawler <scrape-page|crawl-site|health|login|agent-reach-ensure> [--input <file>] [--json <json>] [--pretty]\\n",
     );
     process.exit(2);
 }
@@ -85,6 +86,13 @@ async function main() {
     }
 
     const payload = await loadPayload(flags);
+
+    if (command === "login") {
+        const result = await runLogin(payload, logger);
+        process.stdout.write(flags.pretty ? `${JSON.stringify(result, null, 2)}\\n` : `${JSON.stringify(result)}\\n`);
+        return;
+    }
+
     const result = command === "scrape-page" ? await runScrapePage(payload, logger) : await runCrawlSite(payload, logger);
 
     process.stdout.write(flags.pretty ? `${JSON.stringify(result, null, 2)}\\n` : `${JSON.stringify(result)}\\n`);

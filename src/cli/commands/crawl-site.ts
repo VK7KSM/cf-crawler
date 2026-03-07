@@ -17,6 +17,9 @@ const schema = z.object({
     exclude_patterns: z.array(z.string()).optional(),
     strategy: z.enum(["auto", "edge_fetch", "edge_browser"]).default("auto"),
     persist_path: z.string().optional(),
+    session_id: z.string().optional(),
+    sitemap_url: z.string().url().optional(),
+    device_type: z.enum(["desktop", "mobile", "auto"]).optional(),
 });
 
 export async function runCrawlSite(raw: unknown, logger: pino.Logger): Promise<ToolResult> {
@@ -36,6 +39,7 @@ export async function runCrawlSite(raw: unknown, logger: pino.Logger): Promise<T
         timeoutMs: config.timeoutMs,
         maxRetries: config.maxRetries,
         hostCooldownMs: config.hostCooldownMs,
+        batchSize: config.batchSize,
         urlPolicy,
         logger,
     });

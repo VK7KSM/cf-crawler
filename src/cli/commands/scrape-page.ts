@@ -4,6 +4,7 @@ import { withRetry } from "../../core/retry.js";
 import { shouldUpgradeToRender } from "../../executors/decision.js";
 import { cfFetch } from "../../executors/cf_fetch.js";
 import { cfRender } from "../../executors/cf_render.js";
+import { cfBypass } from "../../executors/cf_bypass.js";
 import type { RemoteResponse } from "../../executors/types.js";
 import { extractArticle } from "../../extractors/article.js";
 import { extractListing } from "../../extractors/listing.js";
@@ -17,10 +18,11 @@ const schema = z.object({
     url: z.string().url(),
     goal: z.string().min(1),
     mode: z.enum(["article", "feed", "listing", "raw", "screenshot"]).default("article"),
-    strategy: z.enum(["auto", "edge_fetch", "edge_browser"]).default("auto"),
+    strategy: z.enum(["auto", "edge_fetch", "edge_browser", "paywall_bypass"]).default("auto"),
     selectors: z.array(z.string()).optional(),
     session_id: z.string().optional(),
     persist_path: z.string().optional(),
+    device_type: z.enum(["desktop", "mobile", "auto"]).optional(),
 });
 
 export async function runScrapePage(raw: unknown, logger: pino.Logger): Promise<ToolResult> {
@@ -34,12 +36,59 @@ export async function runScrapePage(raw: unknown, logger: pino.Logger): Promise<
     });
     await policy.assertAllowed(input.url);
 
+    const execCfg = { endpoint: config.endpoint, token: config.token, timeoutMs: config.timeoutMs };
+
+    // Paywall bypass strategy
+    if (input.strategy === "paywall_bypass") {
+        const bypassResult = await cfBypass(execCfg, {
+            url: input.url,
+            goal: input.goal,
+            mode: input.mode,
+            timeout_ms: config.timeoutMs,
+            session_id: input.session_id,
+        });
+
+        const html = bypassResult.html ?? bypassResult.body ?? "";
+        const article = extractArticle(html);
+        const listing = extractListing(bypassResult.final_url ?? input.url, html);
+
+        const output: ToolResult = {
+            success: bypassResult.ok,
+            strategy_used: "edge_fetch",
+            final_url: bypassResult.final_url ?? input.url,
+            title: bypassResult.title ?? article.title,
+            markdown: bypassResult.markdown ?? article.markdown,
+            items: listing.items,
+            anti_bot_signals: bypassResult.anti_bot_signals ?? [],
+            diagnostics: {
+                status: bypassResult.ok ? "ok" : "error",
+                timings: {
+                    total_ms: Date.now() - started,
+                    remote_ms: bypassResult.timings?.total_ms ?? 0,
+                },
+                retries: 0,
+                cache_hit: false,
+            },
+            bypass_strategy_used: bypassResult.bypass_strategy_used,
+        };
+
+        if (input.persist_path) {
+            await persistJson(input.persist_path, output);
+            if (config.dbPath) await ensureSqliteSchema(config.dbPath);
+        }
+
+        logger.info({ url: input.url, bypass: output.bypass_strategy_used }, "scrape-page (paywall_bypass) completed");
+        return output;
+    }
+
+    // Standard strategies (auto / edge_fetch / edge_browser)
     const payload = {
         url: input.url,
         mode: input.mode,
         timeout_ms: config.timeoutMs,
         selectors: input.selectors,
         session_id: input.session_id,
+        device_type: input.device_type,
     };
 
     let strategyUsed: "edge_fetch" | "edge_browser" = input.strategy === "edge_browser" ? "edge_browser" : "edge_fetch";
@@ -48,21 +97,21 @@ export async function runScrapePage(raw: unknown, logger: pino.Logger): Promise<
     let result: RemoteResponse;
     if (input.strategy === "edge_browser") {
         const renderAttempt = await withRetry(
-            () => cfRender({ endpoint: config.endpoint, token: config.token, timeoutMs: config.timeoutMs }, payload),
+            () => cfRender(execCfg, payload),
             config.maxRetries,
         );
         retries += renderAttempt.retries;
         result = renderAttempt.value;
     } else if (input.strategy === "edge_fetch") {
         const fetchAttempt = await withRetry(
-            () => cfFetch({ endpoint: config.endpoint, token: config.token, timeoutMs: config.timeoutMs }, payload),
+            () => cfFetch(execCfg, payload),
             config.maxRetries,
         );
         retries += fetchAttempt.retries;
         result = fetchAttempt.value;
     } else {
         const fetchAttempt = await withRetry(
-            () => cfFetch({ endpoint: config.endpoint, token: config.token, timeoutMs: config.timeoutMs }, payload),
+            () => cfFetch(execCfg, payload),
             config.maxRetries,
         );
         retries += fetchAttempt.retries;
@@ -70,7 +119,7 @@ export async function runScrapePage(raw: unknown, logger: pino.Logger): Promise<
 
         if (shouldUpgradeToRender(fetchAttempt.value)) {
             const renderAttempt = await withRetry(
-                () => cfRender({ endpoint: config.endpoint, token: config.token, timeoutMs: config.timeoutMs }, payload),
+                () => cfRender(execCfg, payload),
                 config.maxRetries,
             );
             retries += renderAttempt.retries;

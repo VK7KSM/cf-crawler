@@ -5,12 +5,18 @@ compatibility_date = "2026-03-06"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-CF_CRAWLER_VERSION = "0.2.0"
+CF_CRAWLER_VERSION = "0.3.0"
 
 [browser]
 binding = "BROWSER"
 
-# Optional: KV cache for low-cost dedupe/result caching.
-# [[kv_namespaces]]
-# binding = "CRAWLER_CACHE"
-# id = "<kv_namespace_id>"
+# KV cache for low-cost dedupe/result caching.
+[[kv_namespaces]]
+binding = "CRAWLER_CACHE"
+id = "d4181e7d05c743c9982d64213f8f2b09"
+
+# D1 database for session/cookie persistence.
+[[d1_databases]]
+binding = "SESSION_DB"
+database_name = "cf-crawler-sessions"
+database_id = "e4dabcc4-1d7f-4faa-8c5b-74d2314ff99c"
