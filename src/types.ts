@@ -75,4 +75,5 @@ export interface ToolResult {
     diagnostics: Diagnostics;
     pages?: CrawlPage[];
     bypass_strategy_used?: string;
+    screenshot_path?: string;
 }

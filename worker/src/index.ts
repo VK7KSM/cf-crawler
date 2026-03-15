@@ -425,6 +425,18 @@ async function doRender(payload: FetchPayload, env: Env): Promise<Response> {
         const finalUrl = page.url();
         const antiBotSignals = buildSignals(200, html, "text/html");
 
+        // Screenshot capture (mode=screenshot)
+        let screenshotBase64: string | undefined;
+        if (payload.mode === "screenshot") {
+            const buffer = await page.screenshot({ type: "png", fullPage: true });
+            const bytes = new Uint8Array(buffer);
+            let binary = "";
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            screenshotBase64 = btoa(binary);
+        }
+
         // Export cookies and save to D1
         const browserCookies = await context.cookies();
         if (browserCookies.length > 0 && payload.session_id) {
@@ -445,6 +457,7 @@ async function doRender(payload: FetchPayload, env: Env): Promise<Response> {
             status: 200,
             title,
             html,
+            screenshot_base64: screenshotBase64,
             content_type: "text/html; charset=utf-8",
             anti_bot_signals: antiBotSignals,
             timings: { total_ms: Date.now() - started },

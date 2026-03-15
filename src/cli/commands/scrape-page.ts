@@ -1,5 +1,7 @@
 ﻿import type pino from "pino";
 import { z } from "zod";
+import { writeFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { withRetry } from "../../core/retry.js";
 import { shouldUpgradeToRender, shouldTryCrawlApi } from "../../executors/decision.js";
 import { cfFetch } from "../../executors/cf_fetch.js";
@@ -149,6 +151,18 @@ export async function runScrapePage(raw: unknown, logger: pino.Logger): Promise<
     const article = extractArticle(html);
     const listing = extractListing(result.final_url ?? input.url, html);
 
+    // Save screenshot to disk if mode=screenshot
+    let screenshotPath: string | undefined;
+    if (input.mode === "screenshot" && result.screenshot_base64) {
+        const dir = join("homework", "screenshots");
+        await mkdir(dir, { recursive: true });
+        const domain = new URL(input.url).hostname;
+        const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const filename = `${domain}_${ts}.png`;
+        screenshotPath = join(dir, filename);
+        await writeFile(screenshotPath, Buffer.from(result.screenshot_base64, "base64"));
+    }
+
     const output: ToolResult = {
         success: result.ok,
         strategy_used: strategyUsed,
@@ -166,6 +180,7 @@ export async function runScrapePage(raw: unknown, logger: pino.Logger): Promise<
             retries,
             cache_hit: false,
         },
+        screenshot_path: screenshotPath,
     };
 
     if (input.persist_path) {
