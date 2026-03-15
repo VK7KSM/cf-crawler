@@ -1,10 +1,11 @@
 ﻿import type pino from "pino";
 import { z } from "zod";
 import { withRetry } from "../../core/retry.js";
-import { shouldUpgradeToRender } from "../../executors/decision.js";
+import { shouldUpgradeToRender, shouldTryCrawlApi } from "../../executors/decision.js";
 import { cfFetch } from "../../executors/cf_fetch.js";
 import { cfRender } from "../../executors/cf_render.js";
 import { cfBypass } from "../../executors/cf_bypass.js";
+import { cfCrawlApi } from "../../executors/cf_crawl_api.js";
 import type { RemoteResponse } from "../../executors/types.js";
 import { extractArticle } from "../../extractors/article.js";
 import { extractListing } from "../../extractors/listing.js";
@@ -125,6 +126,20 @@ export async function runScrapePage(raw: unknown, logger: pino.Logger): Promise<
             retries += renderAttempt.retries;
             if (renderAttempt.value.ok) {
                 strategyUsed = "edge_browser";
+                result = renderAttempt.value;
+            } else if (shouldTryCrawlApi(renderAttempt.value)) {
+                const crawlResult = await cfCrawlApi(execCfg, {
+                    url: input.url,
+                    formats: ["markdown", "html"],
+                    render: true,
+                });
+                if (crawlResult.ok) {
+                    strategyUsed = "edge_browser";
+                    result = crawlResult;
+                } else {
+                    result = renderAttempt.value;
+                }
+            } else {
                 result = renderAttempt.value;
             }
         }

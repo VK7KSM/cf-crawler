@@ -11,6 +11,8 @@ interface Env {
     CRAWLER_CACHE?: KVNamespace;
     CACHE_TTL_SECONDS?: string;
     SESSION_DB?: D1Database;
+    CF_API_TOKEN?: string;
+    CF_ACCOUNT_ID?: string;
 }
 
 interface FetchPayload {
@@ -65,6 +67,14 @@ interface SessionRow {
     cookies: string;
     headers: string | null;
     updated_at: number;
+}
+
+interface CrawlProxyPayload {
+    url: string;
+    formats?: string[];
+    render?: boolean;
+    max_age?: number;
+    timeout_ms?: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -802,6 +812,160 @@ async function doLogin(payload: LoginPayload, env: Env): Promise<Response> {
 }
 
 /* ------------------------------------------------------------------ */
+/*  POST /v1/crawl — proxy to CF Browser Rendering /crawl REST API     */
+/* ------------------------------------------------------------------ */
+
+async function doCrawlProxy(payload: CrawlProxyPayload, env: Env): Promise<Response> {
+    if (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID) {
+        return json(200, {
+            ok: false,
+            url: payload.url,
+            status: 501,
+            error: "CF_API_TOKEN or CF_ACCOUNT_ID not configured",
+        });
+    }
+
+    const started = Date.now();
+    const apiBase = `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/browser-rendering/crawl`;
+    const pollTimeout = payload.timeout_ms ?? 30_000;
+    const formats = payload.formats ?? ["markdown", "html"];
+
+    // Step 1: Create crawl job (limit:1 for single page)
+    let jobId: string;
+    try {
+        const createResp = await fetch(apiBase, {
+            method: "POST",
+            headers: {
+                "authorization": `Bearer ${env.CF_API_TOKEN}`,
+                "content-type": "application/json",
+            },
+            body: JSON.stringify({
+                url: payload.url,
+                limit: 1,
+                formats,
+                render: payload.render ?? true,
+                maxAge: payload.max_age ?? 86400,
+            }),
+        });
+
+        if (!createResp.ok) {
+            const errText = await createResp.text();
+            return json(200, {
+                ok: false,
+                url: payload.url,
+                status: createResp.status,
+                error: `crawl job creation failed: ${createResp.status} ${errText}`,
+                timings: { total_ms: Date.now() - started },
+            });
+        }
+
+        const createData = (await createResp.json()) as { result?: { id?: string } };
+        jobId = createData?.result?.id ?? "";
+        if (!jobId) {
+            return json(200, {
+                ok: false,
+                url: payload.url,
+                status: 500,
+                error: "crawl job created but no job ID returned",
+                timings: { total_ms: Date.now() - started },
+            });
+        }
+    } catch (err) {
+        return json(200, {
+            ok: false,
+            url: payload.url,
+            status: 0,
+            error: `crawl job creation error: ${err instanceof Error ? err.message : String(err)}`,
+            timings: { total_ms: Date.now() - started },
+        });
+    }
+
+    // Step 2: Poll for completion
+    const pollStart = Date.now();
+    const pollInterval = 2_000;
+
+    while (Date.now() - pollStart < pollTimeout) {
+        await new Promise((r) => setTimeout(r, pollInterval));
+
+        try {
+            const statusResp = await fetch(`${apiBase}/${jobId}`, {
+                headers: { "authorization": `Bearer ${env.CF_API_TOKEN}` },
+            });
+
+            if (!statusResp.ok) continue;
+
+            const statusData = (await statusResp.json()) as {
+                result?: {
+                    status?: string;
+                    records?: Array<{
+                        url: string;
+                        status: string;
+                        html?: string;
+                        markdown?: string;
+                        metadata?: { status?: number; title?: string; url?: string };
+                    }>;
+                };
+            };
+
+            const jobStatus = statusData?.result?.status;
+            if (jobStatus === "completed" || jobStatus === "errored") {
+                const records = statusData?.result?.records ?? [];
+                const record = records[0];
+
+                if (!record || record.status !== "completed") {
+                    return json(200, {
+                        ok: false,
+                        url: payload.url,
+                        status: record?.metadata?.status ?? 0,
+                        error: `crawl page status: ${record?.status ?? jobStatus}`,
+                        anti_bot_signals: ["crawl_api_failed"],
+                        timings: { total_ms: Date.now() - started },
+                    });
+                }
+
+                return json(200, {
+                    ok: true,
+                    url: payload.url,
+                    final_url: record.metadata?.url ?? record.url,
+                    status: record.metadata?.status ?? 200,
+                    title: record.metadata?.title,
+                    html: record.html,
+                    markdown: record.markdown,
+                    content_type: "text/html",
+                    anti_bot_signals: [],
+                    timings: { total_ms: Date.now() - started },
+                    crawl_api: true,
+                });
+            }
+
+            // cancelled states
+            if (jobStatus && jobStatus.startsWith("cancelled")) {
+                return json(200, {
+                    ok: false,
+                    url: payload.url,
+                    status: 0,
+                    error: `crawl job ${jobStatus}`,
+                    anti_bot_signals: ["crawl_api_cancelled"],
+                    timings: { total_ms: Date.now() - started },
+                });
+            }
+        } catch {
+            // poll error, retry
+        }
+    }
+
+    // Timeout
+    return json(200, {
+        ok: false,
+        url: payload.url,
+        status: 0,
+        error: `crawl job polling timed out after ${pollTimeout}ms`,
+        anti_bot_signals: ["crawl_api_timeout"],
+        timings: { total_ms: Date.now() - started },
+    });
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main router                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -911,6 +1075,12 @@ export default {
             if (!payload.login_url) return json(400, { ok: false, error: "login_url is required" });
             if (!payload.credentials) return json(400, { ok: false, error: "credentials is required" });
             return doLogin(payload, env);
+        }
+
+        if (url.pathname === "/v1/crawl") {
+            const payload = body as CrawlProxyPayload;
+            if (!payload.url) return json(400, { ok: false, error: "url is required" });
+            return doCrawlProxy(payload, env);
         }
 
         return json(404, { ok: false, error: "not found" });

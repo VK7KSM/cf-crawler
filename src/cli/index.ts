@@ -14,10 +14,10 @@ const logger = pino({ name: "cf-crawler" });
 const argv = process.argv.slice(2);
 
 const command = argv[0];
-const allowedCommands = new Set(["scrape-page", "crawl-site", "health", "agent-reach-ensure", "login"]);
+const allowedCommands = new Set(["scrape-page", "crawl-site", "health", "agent-reach-ensure", "login", "help"]);
 if (!command || !allowedCommands.has(command)) {
     process.stderr.write(
-        "Usage: cf-crawler <scrape-page|crawl-site|health|login|agent-reach-ensure> [--input <file>] [--json <json>] [--pretty]\\n",
+        "Usage: cf-crawler <scrape-page|crawl-site|health|login|agent-reach-ensure|help> [--input <file>] [--json <json>] [--pretty]\\n",
     );
     process.exit(2);
 }
@@ -75,6 +75,30 @@ async function main() {
     const flags = parseCliFlags(argv.slice(1));
     const config = loadRuntimeConfig();
 
+    if (command === "help") {
+        const helpText = [
+            "cf-crawler — Cloudflare Workers web crawler",
+            "",
+            "Commands:",
+            "  health              Check if the Cloudflare Worker is running",
+            "  scrape-page         Scrape a single page (article/feed/listing/raw/screenshot)",
+            "  crawl-site          Crawl multiple pages via BFS",
+            "  login               Automate login and create reusable session",
+            "  agent-reach-ensure  Check/install agent-reach tool",
+            "",
+            "Input: echo '<json>' | cf-crawler <cmd> --pretty",
+            "",
+            "Preferred skill tools (use these instead of shell commands in agent context):",
+            "  web_scrape(json_input='{\"url\":\"URL\",\"goal\":\"goal\",\"mode\":\"feed\"}')",
+            "  web_crawl(json_input='{\"seed_url\":\"URL\",\"goal\":\"goal\",\"max_pages\":5}')",
+            "  web_login(json_input='{\"url\":\"URL\",\"steps\":[...]}')",
+            "  web_health()",
+        ].join("\n");
+        const out = { success: true, command: "help", help: helpText };
+        process.stdout.write(`${JSON.stringify(out, null, flags.pretty ? 2 : 0)}\n`);
+        return;
+    }
+
     if (command === "health") {
         const health = await cfHealth(config.endpoint, config.token, config.timeoutMs);
         const result = {
@@ -114,6 +138,8 @@ main().catch((error) => {
     const out = {
         success: false,
         error: String(error instanceof Error ? error.message : error),
+        // elfClaw: guide agent toward skill tools on any command failure
+        hint: "Skill tools are preferred over shell commands. Use: web_scrape, web_crawl, web_login, web_health. Run 'cf-crawler help' for full usage.",
     };
     process.stderr.write(`${out.error}\n`);
     process.stdout.write(`${JSON.stringify(out)}\n`);

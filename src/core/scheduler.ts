@@ -3,11 +3,12 @@ import { DedupeSet } from "./dedupe.js";
 import { UrlQueue } from "./queue.js";
 import { HostRateLimiter } from "./rate_limit.js";
 import { withRetry } from "./retry.js";
-import { shouldUpgradeToRender } from "../executors/decision.js";
+import { shouldUpgradeToRender, shouldTryCrawlApi } from "../executors/decision.js";
 import { cfFetch } from "../executors/cf_fetch.js";
 import { cfRender } from "../executors/cf_render.js";
 import { cfBatchFetch } from "../executors/cf_batch.js";
 import { cfSitemap } from "../executors/cf_sitemap.js";
+import { cfCrawlApi } from "../executors/cf_crawl_api.js";
 import type { ExecutorConfig, RemoteResponse } from "../executors/types.js";
 import { extractArticle } from "../extractors/article.js";
 import { extractListing } from "../extractors/listing.js";
@@ -83,6 +84,16 @@ async function fetchSinglePage(
             if (renderR.value.ok) {
                 remote = renderR.value;
                 strategyUsed = "edge_browser";
+            } else if (shouldTryCrawlApi(renderR.value)) {
+                const crawlR = await cfCrawlApi(execCfg, {
+                    url,
+                    formats: ["markdown", "html"],
+                    render: true,
+                });
+                if (crawlR.ok) {
+                    remote = crawlR;
+                    strategyUsed = "edge_browser";
+                }
             }
         }
     }

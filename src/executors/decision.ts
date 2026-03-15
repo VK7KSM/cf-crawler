@@ -27,3 +27,9 @@ export function shouldUpgradeToRender(resp: RemoteResponse): boolean {
 
     return false;
 }
+
+export function shouldTryCrawlApi(resp: RemoteResponse): boolean {
+    if (!resp.ok) return true;
+    if ([403, 429, 503].includes(resp.status)) return true;
+    return false;
+}
