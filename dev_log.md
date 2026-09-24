@@ -1,5 +1,17 @@
 # cf-crawler 开发日志
 
+## 2026-09-24 — 修复：结果行末尾输出的是字面 `\n`，不是换行
+
+**现象**：elfClaw 的 `web_scrape` 每次成功抓取都报"执行失败（退出码 0）"，新闻 worker 连续"失败"后被循环检测中止。
+
+**原因**：`src/cli/index.ts` 里 health / agent-reach-ensure / login / scrape-page / crawl-site 输出结果时写的是 `` `${JSON.stringify(result)}\\n` ``，在模板字符串里 `\\n` 是反斜杠加字母 n，所以 stdout 的结果行末尾多了两个字符 `\n`，而不是换行符。按"每行一个 JSON"解析的调用方（elfClaw）因此解析失败。help 命令和报错路径用的是正确的 `\n`，所以之前只在出错时看起来正常。
+
+**改动**：`src/cli/index.ts` 的 8 处 `\\n` 改为 `\n`（4 行，每行有 pretty 和非 pretty 两种写法）。
+
+**验证**：`npm run check` 通过；用源码（tsx）和重新打包的 `release/cf-crawler-win-x64.exe` 分别跑 scrape-page（V2EX RSS）和 health，每一行都能单独解析成 JSON，结尾是真正的换行，`success`/`ok` 都是 true。elfClaw 那边的解析已经兼容旧格式（commit e8514db60），所以旧 exe 也能正常用。
+
+---
+
 ## 2026-03-15 — v0.3.1: /crawl API 集成 + 截图功能
 
 ### 1. 集成 Cloudflare /crawl REST API（第三道反爬防线）

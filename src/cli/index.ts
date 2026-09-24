@@ -110,13 +110,13 @@ async function main() {
             remote: health.body,
             timestamp: new Date().toISOString(),
         };
-        process.stdout.write(flags.pretty ? `${JSON.stringify(result, null, 2)}\\n` : `${JSON.stringify(result)}\\n`);
+        process.stdout.write(flags.pretty ? `${JSON.stringify(result, null, 2)}\n` : `${JSON.stringify(result)}\n`);
         return;
     }
 
     if (command === "agent-reach-ensure") {
         const result = await runAgentReachEnsure(logger);
-        process.stdout.write(flags.pretty ? `${JSON.stringify(result, null, 2)}\\n` : `${JSON.stringify(result)}\\n`);
+        process.stdout.write(flags.pretty ? `${JSON.stringify(result, null, 2)}\n` : `${JSON.stringify(result)}\n`);
         return;
     }
 
@@ -124,13 +124,13 @@ async function main() {
 
     if (command === "login") {
         const result = await runLogin(payload, logger);
-        process.stdout.write(flags.pretty ? `${JSON.stringify(result, null, 2)}\\n` : `${JSON.stringify(result)}\\n`);
+        process.stdout.write(flags.pretty ? `${JSON.stringify(result, null, 2)}\n` : `${JSON.stringify(result)}\n`);
         return;
     }
 
     const result = command === "scrape-page" ? await runScrapePage(payload, logger) : await runCrawlSite(payload, logger);
 
-    process.stdout.write(flags.pretty ? `${JSON.stringify(result, null, 2)}\\n` : `${JSON.stringify(result)}\\n`);
+    process.stdout.write(flags.pretty ? `${JSON.stringify(result, null, 2)}\n` : `${JSON.stringify(result)}\n`);
 }
 
 main().catch((error) => {
