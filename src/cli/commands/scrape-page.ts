@@ -73,6 +73,7 @@ export async function runScrapePage(raw: unknown, logger: pino.Logger): Promise<
                 cache_hit: false,
             },
             bypass_strategy_used: bypassResult.bypass_strategy_used,
+            error: bypassResult.ok ? undefined : bypassResult.error,
         };
 
         if (input.persist_path) {
@@ -181,6 +182,9 @@ export async function runScrapePage(raw: unknown, logger: pino.Logger): Promise<
             cache_hit: false,
         },
         screenshot_path: screenshotPath,
+        // Surface the Worker's error (e.g. "Unable to create new browser: code: 429:
+        // Rate limit exceeded") so callers can tell a transient limit from a dead source.
+        error: result.ok ? undefined : result.error,
     };
 
     if (input.persist_path) {

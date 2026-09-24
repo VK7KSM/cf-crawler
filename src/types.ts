@@ -76,4 +76,6 @@ export interface ToolResult {
     pages?: CrawlPage[];
     bypass_strategy_used?: string;
     screenshot_path?: string;
+    /** Remote error text when success is false (e.g. Browser Rendering rate limit). */
+    error?: string;
 }
