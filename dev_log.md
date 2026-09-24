@@ -1,5 +1,15 @@
 # cf-crawler 开发日志
 
+## 2026-09-24 — scrape-page 失败时带上 Worker 报错原文
+
+**原因**：elfClaw 的新闻任务并行抓取时，经常撞上 Cloudflare Browser Rendering 的限流（`Unable to create new browser: code: 429: message: Rate limit exceeded`，免费计划每分钟能新开的浏览器数量有限）。但 scrape-page 失败时只返回 `anti_bot_signals: ["render_error"]`，调用方分不清是这种临时限流，还是网站本身失效，于是把能用的源也记为失败。
+
+**改动**：`ToolResult` 新增可选字段 `error`；scrape-page 的普通路径和 paywall_bypass 路径在 `success: false` 时填入 Worker 返回的 `error`。成功时不带这个字段，旧调用方不受影响。
+
+**验证**：`npm run check` 通过；重新打包 exe 后，由 elfClaw 通过真实 Worker 调用，不存在的域名能返回 `getaddrinfo ENOTFOUND …`，浏览器限流能返回完整的限流报错，截图、登录请求也都正常到达 Worker。
+
+---
+
 ## 2026-09-24 — 修复：结果行末尾输出的是字面 `\n`，不是换行
 
 **现象**：elfClaw 的 `web_scrape` 每次成功抓取都报"执行失败（退出码 0）"，新闻 worker 连续"失败"后被循环检测中止。
