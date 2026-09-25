@@ -1,0 +1,14 @@
+{
+  "name": "cf-crawler-local-browser",
+  "version": "0.1.0",
+  "description": "Local real-Chrome fetcher for elfClaw: persistent profile, on-demand launch, killed after each run.",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}

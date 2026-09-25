@@ -8,3 +8,7 @@ data/cache/
 dist-exe/
 release/
 data/runs/
+
+# Local browser: the Chrome profile holds cookies and session data — never commit it
+browser/profile/
+browser/node_modules/
