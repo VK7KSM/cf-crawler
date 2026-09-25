@@ -1,5 +1,17 @@
 # cf-crawler 开发日志
 
+## 2026-09-25 — 修复 Worker `/v1/crawl` 拿不到任务 ID（v0.3.2）
+
+**现象**：`/v1/crawl` 每次都失败，拿不到抓取结果。
+
+**原因**：Cloudflare Browser Rendering 的 `/crawl` 接口改了返回格式：创建任务时以前返回 `{ result: { id } }`，现在直接返回 `{ result: "<任务ID>" }`。Worker 仍按旧格式读 `result.id`，读到的是空字符串，后面的轮询自然失败。查询任务状态的接口格式没变。
+
+**改动**：`worker/src/index.ts` 的 `doCrawlProxy` 同时兼容两种格式；`worker/wrangler.toml` 版本号改为 0.3.2。已用 wrangler 部署（Version ID 2cbae47c）。
+
+**验证**：`/v1/health` 返回 0.3.2；`/v1/crawl` 抓 example.com 返回 ok、200。Locanto、Sammyboy 这类站点用 crawl 接口同样被拦（403 errored），说明官方 crawl 接口也过不了它们的防护，这两个站暂时放弃。
+
+---
+
 ## 2026-09-24 — scrape-page 失败时带上 Worker 报错原文
 
 **原因**：elfClaw 的新闻任务并行抓取时，经常撞上 Cloudflare Browser Rendering 的限流（`Unable to create new browser: code: 429: message: Rate limit exceeded`，免费计划每分钟能新开的浏览器数量有限）。但 scrape-page 失败时只返回 `anti_bot_signals: ["render_error"]`，调用方分不清是这种临时限流，还是网站本身失效，于是把能用的源也记为失败。

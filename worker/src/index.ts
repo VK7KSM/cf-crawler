@@ -872,8 +872,11 @@ async function doCrawlProxy(payload: CrawlProxyPayload, env: Env): Promise<Respo
             });
         }
 
-        const createData = (await createResp.json()) as { result?: { id?: string } };
-        jobId = createData?.result?.id ?? "";
+        // The API used to return { result: { id } }; since 2026 it returns the
+        // job id directly as { result: "<id>" }. Accept both.
+        const createData = (await createResp.json()) as { result?: string | { id?: string } };
+        const created = createData?.result;
+        jobId = typeof created === "string" ? created : created?.id ?? "";
         if (!jobId) {
             return json(200, {
                 ok: false,

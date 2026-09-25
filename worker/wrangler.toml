@@ -5,7 +5,7 @@ compatibility_date = "2026-03-06"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-CF_CRAWLER_VERSION = "0.3.0"
+CF_CRAWLER_VERSION = "0.3.2"
 
 [browser]
 binding = "BROWSER"
