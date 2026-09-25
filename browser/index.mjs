@@ -7,9 +7,15 @@
 // owner uses in `login` mode, so whatever session they created by hand is
 // reused here.
 //
-// Deliberately NOT included: stealth/anti-detect patches, user-agent or TLS
-// fingerprint spoofing, proxy rotation, CAPTCHA solving. This is a stock
-// Chrome. If a site still refuses, we report `challenge` and give up.
+// Anti-detection (reversed an earlier "no stealth" decision, by owner request
+// 2026-09-25): the automation flags Playwright normally sets are stripped and a
+// tiny init script hides navigator.webdriver, so this real Chrome no longer
+// announces itself as automated; a short burst of human-like mouse/scroll
+// motion runs per page. Because it is a REAL headed Chrome, everything else
+// (window.chrome, plugins, codecs, WebGL, languages, TLS) is already genuine and
+// left untouched. Still NOT included: TLS-fingerprint spoofing, proxy rotation,
+// CAPTCHA solving. If a site still challenges, we report `challenge` and leave it
+// to `login` mode (owner clears it once, the session is reused from the profile).
 //
 // Protocol: one JSON request on stdin, one JSON object per line on stdout.
 //   node index.mjs fetch  <<< '{"urls":["https://..."],"wait_ms":3000}'
@@ -73,23 +79,71 @@ async function looksLikeChallenge(page) {
 
 async function launch({ headless, offscreen }) {
     mkdirSync(PROFILE_DIR, { recursive: true });
-    const args = ["--no-first-run", "--no-default-browser-check", "--disable-dev-shm-usage"];
+    const args = [
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-dev-shm-usage",
+        // Layer 1: stop Blink from exposing navigator.webdriver.
+        "--disable-blink-features=AutomationControlled",
+    ];
     // Headed Chrome draws a real window. On the always-on box nobody is
     // watching it, so park it off the visible desktop instead of popping up
     // over the owner's screen. Purely a display choice.
     if (!headless && offscreen) args.push("--window-position=-32000,-32000");
-    return await chromium.launchPersistentContext(PROFILE_DIR, {
+    const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
         executablePath: chromePath(),
         headless,
         viewport: { width: 1366, height: 900 },
+        // Layer 1: drop the "controlled by automated test software" flag
+        // Playwright adds by default; it is the other half of the webdriver
+        // tell. An array removes only this arg and keeps the rest of the
+        // defaults intact.
+        ignoreDefaultArgs: ["--enable-automation"],
         args,
     });
+    // Layer 2: belt-and-suspenders. Even with the flags gone, blank the
+    // webdriver getter before any page script runs. This is a REAL headed
+    // Chrome, so window.chrome, plugins, codecs, WebGL vendor and languages
+    // are already genuine and consistent with the HTTP headers — we touch
+    // nothing else, because faking those would only create fresh mismatches
+    // that a stock browser never has.
+    await ctx.addInitScript(() => {
+        Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+    });
+    return ctx;
+}
+
+/// Small integer in [min, max).
+function rand(min, max) {
+    return Math.floor(min + Math.random() * (max - min));
+}
+
+/// Layer 3: a short burst of human-like motion — a few mouse moves and scrolls
+/// with uneven pauses — so the visit does not read as an instant headless hit.
+/// Pure local code, no model calls. Best-effort: any failure is swallowed so it
+/// never blocks the fetch. Worst case adds ~4s per page, well inside the budget.
+async function humanize(page) {
+    try {
+        for (let i = 0, n = rand(2, 5); i < n; i++) {
+            await page.mouse.move(rand(80, 1200), rand(80, 700), { steps: rand(6, 16) });
+            await page.waitForTimeout(rand(120, 480));
+        }
+        for (let i = 0, n = rand(1, 3); i < n; i++) {
+            await page.mouse.wheel(0, rand(300, 900));
+            await page.waitForTimeout(rand(350, 900));
+        }
+    } catch {
+        // 行为模拟失败无所谓，继续抓取
+    }
 }
 
 async function grab(page, url, waitMs) {
     const resp = await page.goto(url, { waitUntil: "domcontentloaded", timeout: DEFAULT_NAV_TIMEOUT_MS });
     let status = resp ? resp.status() : 0;
     await page.waitForTimeout(waitMs);
+    // Layer 3: move like a person before we read or check for a wall. Some
+    // JS challenges watch for real interaction, so this runs first.
+    await humanize(page);
 
     // Let the browser resolve an interstitial by itself; we solve nothing.
     let challenged = await looksLikeChallenge(page);
